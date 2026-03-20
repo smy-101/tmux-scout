@@ -34,8 +34,8 @@ touch "$AUTO_FLAG"
 generate_lines() {
     local current_pane="${1:-}"
 
-    # Print header
-    printf "_\t  STATUS   PROJECT                      TITLE\n"
+    # Print header (align with data columns)
+    printf "_\t  STATUS    AGENT     PROJECT                      TITLE\n"
 
     # Get tmux panes snapshot
     declare -A pane_commands
@@ -49,7 +49,7 @@ generate_lines() {
         [ -z "$line" ] && continue
 
         # Extract fields using jq
-        local tmux_pane sess_status needs_attention pending_tool session_title working_directory
+        local tmux_pane sess_status needs_attention pending_tool session_title working_directory agent_type
         tmux_pane=$(echo "$line" | jq -r '.tmuxPane // empty')
         [ -z "$tmux_pane" ] && continue
 
@@ -68,46 +68,66 @@ generate_lines() {
         pending_tool=$(echo "$line" | jq -r '.pendingToolUse.details // empty')
         session_title=$(echo "$line" | jq -r '.sessionTitle // empty')
         working_directory=$(echo "$line" | jq -r '.workingDirectory // "?"')
+        agent_type=$(echo "$line" | jq -r '.agentType // "unknown"')
 
         found_any=1
 
-        # Format status tag
-        local tag
-        if [ -n "$needs_attention" ]; then
-            tag=$(printf '\033[31m[ WAIT ]\033[0m')
-        elif [ "$sess_status" = "working" ]; then
-            tag=$(printf '\033[33m[ BUSY ]\033[0m')
-        elif [ "$sess_status" = "completed" ]; then
-            tag=$(printf '\033[32m[ DONE ]\033[0m')
-        else
-            tag=$(printf '\033[34m[ IDLE ]\033[0m')
-        fi
+        # Build output parts
+        local left_part="" agent_part="" project_part="" title_part=""
 
-        # Current pane indicator
-        local cur=" "
+        # Current pane indicator + status (total 11 visible chars: "  [STATUS]")
         if [ "$tmux_pane" = "$current_pane" ]; then
-            cur=$(printf '\033[33m*\033[0m')
+            left_part=$(printf '\033[33m*\033[0m')
+        else
+            left_part=" "
         fi
 
-        # Project name
+        if [ -n "$needs_attention" ]; then
+            left_part="${left_part}$(printf ' \033[31m[ WAIT ]\033[0m')"
+        elif [ "$sess_status" = "working" ]; then
+            left_part="${left_part}$(printf ' \033[33m[ BUSY ]\033[0m')"
+        elif [ "$sess_status" = "completed" ]; then
+            left_part="${left_part}$(printf ' \033[32m[ DONE ]\033[0m')"
+        else
+            left_part="${left_part}$(printf ' \033[34m[ IDLE ]\033[0m')"
+        fi
+
+        # Agent (8 visible chars)
+        local agent_plain
+        agent_plain=$(printf "%-8s" "${agent_type:0:8}")
+        case "$agent_type" in
+            claude)
+                agent_part=$(printf ' \033[38;5;209m%s\033[0m' "$agent_plain")
+                ;;
+            cursor)
+                agent_part=$(printf ' \033[38;5;75m%s\033[0m' "$agent_plain")
+                ;;
+            copilot)
+                agent_part=$(printf ' \033[38;5;114m%s\033[0m' "$agent_plain")
+                ;;
+            *)
+                agent_part=$(printf ' \033[90m%s\033[0m' "$agent_plain")
+                ;;
+        esac
+
+        # Project (25 visible chars)
         local project
         project=$(basename "$working_directory")
         [ ${#project} -gt 25 ] && project="${project:0:24}~"
-        project=$(printf "%-25s" "$project")
+        project_part=$(printf ' %-25s' "$project")
 
         # Title
-        local title=""
         if [ -n "$session_title" ]; then
-            title="$(printf '\033[2m"%s"\033[0m' "${session_title:0:50}")"
+            title_part=$(printf ' \033[2m"%s"\033[0m' "${session_title:0:80}")
         fi
 
         # Tool details
         local detail=""
         if [ -n "$pending_tool" ]; then
-            detail="$(printf '  \033[36m%s\033[0m' "${pending_tool:0:40}")"
+            detail=$(printf '  \033[36m%s\033[0m' "${pending_tool:0:40}")
         fi
 
-        printf "%s\t%s %s $(printf '\033[38;5;209m')claude$(printf '\033[0m') %s %s%s\n" "$tmux_pane" "$cur" "$tag" "$project" "$title" "$detail"
+        printf "%s\t%s%s%s%s%s\n" "$tmux_pane" "$left_part" "$agent_part" "$project_part" "$title_part" "$detail"
     done < <(jq -c '.sessions[] | select(.endedAt == null)' "$STATUS_FILE" 2>/dev/null)
 
     if [ "$found_any" = "0" ]; then
@@ -138,7 +158,7 @@ AUTO_PID=$!
 
 selected=$(cat "$LINES_FILE" | fzf \
     --listen=$LISTEN_PORT \
-    --tmux "center,85%,$height,border-native" \
+    --tmux "center,70%,$height,border-native" \
     --ansi \
     --no-mouse \
     --prompt='> ' \
@@ -149,9 +169,6 @@ selected=$(cat "$LINES_FILE" | fzf \
     --header-lines=1 \
     --bind="ctrl-r:reload($RELOAD_CMD)" \
     --bind="ctrl-t:execute-silent(if [ -f $AUTO_FLAG ]; then rm -f $AUTO_FLAG; else touch $AUTO_FLAG; fi)+reload($RELOAD_CMD)+transform:if [ -f $AUTO_FLAG ]; then printf \"change-border-label( tmux-scout · auto-refresh \$(date +%H:%M:%S) )\"; else printf 'change-border-label( tmux-scout )'; fi" \
-    --preview='tmux capture-pane -pJ -t {1} 2>/dev/null | tail -40' \
-    --preview-window=right:50%:wrap:border-left \
-    --preview-label=" pane preview " \
     --layout=reverse-list \
     --border=rounded \
     --border-label=" tmux-scout · auto-refresh " \
