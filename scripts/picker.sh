@@ -35,7 +35,9 @@ generate_lines() {
     local current_pane="${1:-}"
 
     # Print header (align with data columns)
-    printf "_\t  STATUS    AGENT     PROJECT                      TITLE\n"
+    # Data: cur(1) sp(1) tag(8) sp(2) agent(6) sp(2) project(25) sp(2) title
+    # Agent at pos 12, project at pos 20, title at pos 47
+    printf "_\t  STATUS    AGENT   PROJECT                    TITLE\n"
 
     # Get tmux panes snapshot
     declare -A pane_commands
@@ -92,21 +94,21 @@ generate_lines() {
             left_part="${left_part}$(printf ' \033[34m[ IDLE ]\033[0m')"
         fi
 
-        # Agent (8 visible chars)
+        # Agent (6 visible chars) - pad first, then add ANSI codes
         local agent_plain
-        agent_plain=$(printf "%-8s" "${agent_type:0:8}")
+        agent_plain=$(printf "%-6s" "${agent_type:0:6}")
         case "$agent_type" in
             claude)
-                agent_part=$(printf ' \033[38;5;209m%s\033[0m' "$agent_plain")
+                agent_part=$'\033[38;5;209m'"${agent_plain}"$'\033[0m'
                 ;;
             cursor)
-                agent_part=$(printf ' \033[38;5;75m%s\033[0m' "$agent_plain")
+                agent_part=$'\033[38;5;75m'"${agent_plain}"$'\033[0m'
                 ;;
             copilot)
-                agent_part=$(printf ' \033[38;5;114m%s\033[0m' "$agent_plain")
+                agent_part=$'\033[38;5;114m'"${agent_plain}"$'\033[0m'
                 ;;
             *)
-                agent_part=$(printf ' \033[90m%s\033[0m' "$agent_plain")
+                agent_part=$'\033[90m'"${agent_plain}"$'\033[0m'
                 ;;
         esac
 
@@ -114,20 +116,20 @@ generate_lines() {
         local project
         project=$(basename "$working_directory")
         [ ${#project} -gt 25 ] && project="${project:0:24}~"
-        project_part=$(printf ' %-25s' "$project")
+        project_part=$(printf '%-25s' "$project")
 
         # Title
         if [ -n "$session_title" ]; then
-            title_part=$(printf ' \033[2m"%s"\033[0m' "${session_title:0:80}")
+            title_part=$'\033[2m"'"${session_title:0:80}"$'"\033[0m'
         fi
 
         # Tool details
         local detail=""
         if [ -n "$pending_tool" ]; then
-            detail=$(printf '  \033[36m%s\033[0m' "${pending_tool:0:40}")
+            detail=$'\033[36m'"${pending_tool:0:40}"$'\033[0m'
         fi
 
-        printf "%s\t%s%s%s%s%s\n" "$tmux_pane" "$left_part" "$agent_part" "$project_part" "$title_part" "$detail"
+        printf "%s\t%s  %s  %s  %s %s\n" "$tmux_pane" "$left_part" "$agent_part" "$project_part" "$title_part" "$detail"
     done < <(jq -c '.sessions[] | select(.endedAt == null)' "$STATUS_FILE" 2>/dev/null)
 
     if [ "$found_any" = "0" ]; then
