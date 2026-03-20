@@ -6,7 +6,7 @@
 
 - **会话选择器** — `prefix + v` 打开 fzf 弹窗，显示所有活跃的 Claude Code 会话
 - **实时状态** — 显示会话状态标签：`[ WAIT ]` / `[ BUSY ]` / `[ DONE ]` / `[ IDLE ]`
-- **面板预览** — 右侧预览面板显示每个会话的最后 40 行输出
+- **代理类型** — 显示代理类型（claude/cursor/copilot）并用颜色区分
 - **自动刷新** — `Ctrl-T` 切换每 2 秒自动刷新
 - **崩溃检测** — 自动检测并清理已终止的会话
 - **状态栏小组件** — 在 tmux 状态栏显示会话计数
@@ -83,14 +83,23 @@ tmux-scout 需要在 Claude Code 中安装 hooks 来追踪会话状态：
 ### 显示格式
 
 ```
-* [ BUSY ] claude  my-project                "implement login page"  Bash: npm test
-│ │         │       │                         │                       └─ 当前工具
-│ │         │       │                         └─ 会话标题
-│ │         │       └─ 项目目录
-│ │         └─ 代理类型
+* [ BUSY ]  claude  my-project                "implement login page"  Bash: npm test
+│ │           │       │                         │                       └─ 当前工具
+│ │           │       │                         └─ 会话标题
+│ │           │       └─ 项目目录
+│ │           └─ 代理类型（claude/cursor/copilot）
 │ └─ 状态标签
 └─ 当前面板指示器
 ```
+
+### 代理颜色
+
+| 代理 | 颜色 |
+|------|------|
+| `claude` | 橙色 |
+| `cursor` | 蓝色 |
+| `copilot` | 绿色 |
+| 其他 | 灰色 |
 
 ### 状态说明
 
