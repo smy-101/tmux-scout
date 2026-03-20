@@ -4,7 +4,7 @@
 
 ## 特性
 
-- **会话选择器** — `prefix + V` 打开 fzf 弹窗，显示所有活跃的 Claude Code 会话
+- **会话选择器** — `prefix + v` 打开 fzf 弹窗，显示所有活跃的 Claude Code 会话
 - **实时状态** — 显示会话状态标签：`[ WAIT ]` / `[ BUSY ]` / `[ DONE ]` / `[ IDLE ]`
 - **面板预览** — 右侧预览面板显示每个会话的最后 40 行输出
 - **自动刷新** — `Ctrl-T` 切换每 2 秒自动刷新
@@ -19,65 +19,59 @@
 
 ## 安装
 
+### 手动安装
+
+```bash
+# 克隆仓库
+git clone https://github.com/your-username/tmux-scout.git ~/.tmux/plugins/tmux-scout
+
+# 添加到 ~/.tmux.conf
+echo 'run-shell ~/.tmux/plugins/tmux-scout/scout.tmux' >> ~/.tmux.conf
+
+# 重新加载配置
+tmux source ~/.tmux.conf
+```
+
 ### 使用 TPM
 
 ```bash
-# 添加到 ~/.tmux.conf
+# 在 ~/.tmux.conf 中添加
 set -g @plugin 'your-username/tmux-scout'
 ```
 
 按 `prefix + I` 安装。
-
-### 手动安装
-
-```bash
-git clone https://github.com/your-username/tmux-scout.git ~/.tmux/plugins/tmux-scout
-```
-
-添加到 `~/.tmux.conf`：
-
-```bash
-run-shell ~/.tmux/plugins/tmux-scout/scout.tmux
-```
-
-重新加载 tmux：
-
-```bash
-tmux source ~/.tmux.conf
-```
 
 ## Hook 安装
 
 tmux-scout 需要在 Claude Code 中安装 hooks 来追踪会话状态：
 
 ```bash
-# 获取插件目录
-eval "$(tmux show-env -g SCOUT_DIR)"
-
 # 安装 hooks
-"$SCOUT_DIR/scripts/setup.sh" install
+~/.tmux/plugins/tmux-scout/scripts/setup.sh install
 
-# 其他操作
-"$SCOUT_DIR/scripts/setup.sh" uninstall  # 卸载 hooks
-"$SCOUT_DIR/scripts/setup.sh" status     # 检查安装状态
+# 其他命令
+~/.tmux/plugins/tmux-scout/scripts/setup.sh uninstall  # 卸载 hooks
+~/.tmux/plugins/tmux-scout/scripts/setup.sh status     # 检查状态
 ```
 
-### 修改的文件
+### Hook 事件
 
-安装 hooks 会修改 `~/.claude/settings.json`，添加以下 6 个事件的 hook：
+安装 hooks 会在 `~/.claude/settings.json` 中添加以下事件的监听：
 
-- `SessionStart` — 会话开始
-- `UserPromptSubmit` — 用户提交提示
-- `PreToolUse` — 工具使用前
-- `PostToolUse` — 工具使用后
-- `Stop` — 停止
-- `SessionEnd` — 会话结束
+| 事件 | 触发时机 |
+|------|----------|
+| `SessionStart` | Claude Code 会话开始 |
+| `UserPromptSubmit` | 用户发送消息 |
+| `PreToolUse` | 工具执行前 |
+| `PostToolUse` | 工具执行后 |
+| `Stop` | 会话停止 |
+| `SessionEnd` | 会话结束 |
 
 ## 使用方法
 
-### 选择器
+### 会话选择器
 
-按 `prefix + V`（默认）打开会话选择器。
+按 `prefix + v` 打开会话选择器弹窗。
 
 | 按键 | 操作 |
 |------|------|
@@ -86,86 +80,105 @@ eval "$(tmux show-env -g SCOUT_DIR)"
 | `Ctrl-T` | 切换自动刷新（每 2 秒） |
 | `Esc` | 关闭选择器 |
 
-每行显示：
+### 显示格式
 
 ```
-* [ BUSY ] claude  my-project                "implement the login page"  Bash: npm test
+* [ BUSY ] claude  my-project                "implement login page"  Bash: npm test
+│ │         │       │                         │                       └─ 当前工具
+│ │         │       │                         └─ 会话标题
+│ │         │       └─ 项目目录
+│ │         └─ 代理类型
+│ └─ 状态标签
+└─ 当前面板指示器
 ```
 
-- `*` — 当前面板指示器
-- `[ WAIT ]` / `[ BUSY ]` / `[ DONE ]` / `[ IDLE ]` — 会话状态
-- `claude` — 代理类型
-- `my-project` — 项目目录名
-- `"..."` — 会话标题（第一个提示）
-- `Bash: npm test` — 当前工具详情
+### 状态说明
+
+| 状态 | 描述 | 颜色 |
+|------|------|------|
+| `WAIT` | 等待用户确认（如权限请求） | 红色 |
+| `BUSY` | 正在处理中 | 黄色 |
+| `DONE` | 已完成 | 绿色 |
+| `IDLE` | 空闲等待输入 | 蓝色 |
 
 ### 状态栏小组件
 
-状态栏小组件不会自动注入，需要手动添加到配置中：
+添加到 `~/.tmux.conf` 以在状态栏显示会话统计：
 
 ```bash
-# 添加到 ~/.tmux.conf
-set -g status-right '#($SCOUT_DIR/scripts/status-widget.sh) #S'
+set -g status-right '#($SCOUT_DIR/scripts/status-widget.sh) | #S'
 set -g status-interval 2
 ```
 
-显示格式：`W|B|D`
+显示格式：`W|B|D`（等待数|处理数|完成数）
 
-- `W` = 等待注意（红色）
-- `B` = 处理中（黄色）
-- `D` = 完成（绿色）
+## 自定义
 
-## 配置
-
-### 快捷键
+### 更改快捷键
 
 ```bash
-# 在 ~/.tmux.conf 中自定义快捷键（默认：V）
-set -g @scout-key "O"
+# 在 ~/.tmux.conf 中（加载插件后）
+set-hook -g pane-mode-changed 'bind-key O run-shell -b "$SCOUT_DIR/scripts/picker.sh"'
 ```
 
-## 数据存储
+或直接编辑 `scout.tmux` 中的 `bind-key v` 行。
 
-会话数据存储在 `~/.tmux-scout/` 目录：
+## 数据存储
 
 ```
 ~/.tmux-scout/
 ├── status.json          # 聚合的会话索引
-└── sessions/            # 每个会话的 JSON 文件
+└── sessions/            # 每个会话的独立文件
     ├── {session-id}.json
     └── ...
 ```
 
-超过 24 小时的会话会自动清理。
+- 超过 24 小时的会话会自动清理
+- 每个会话文件包含完整的状态历史
 
 ## 工作原理
 
-### Hook 机制
-
-当 Claude Code 触发事件时，会调用 `hook.sh` 脚本，该脚本：
-
-1. 从 stdin 读取 JSON 数据
-2. 解析事件类型和相关信息
-3. 更新 `~/.tmux-scout/sessions/{session-id}.json`
-4. 同步更新 `~/.tmux-scout/status.json`
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   Claude Code   │────▶│    hook.sh      │────▶│  sessions/*.json│
+│   (hook event)  │     │  (parse & save) │     │  (session data) │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+                                                        │
+                        ┌─────────────────┐             │
+                        │   picker.sh     │◀────────────┘
+                        │  (fzf popup)    │     read & display
+                        └─────────────────┘
+```
 
 ### 状态检测
 
-`sync.sh` 脚本负责：
+`sync.sh` 通过以下方式检测会话状态：
 
-1. 获取所有 tmux 面板的快照
-2. 检测崩溃的进程（通过 PID 检查）
-3. 检测返回到 shell 的面板
-4. 从面板内容推断当前状态
+1. **PID 检查** — 验证进程是否存活
+2. **面板命令** — 检测是否返回到 shell
+3. **内容分析** — 从面板输出推断状态：
+   - `✻ Thinking` → working
+   - `✻ Idle` → completed
+   - `Do you want to proceed` → needsAttention
 
-### 状态类型
+## 故障排除
 
-| 状态 | 描述 | 颜色 |
-|------|------|------|
-| `WAIT` | 等待用户注意/审批 | 红色 |
-| `BUSY` | 正在处理 | 黄色 |
-| `DONE` | 已完成 | 绿色 |
-| `IDLE` | 空闲 | 蓝色 |
+### 弹窗显示 "No active sessions found"
+
+1. 确认 hooks 已安装：
+   ```bash
+   ~/.tmux/plugins/tmux-scout/scripts/setup.sh status
+   ```
+
+2. 检查 `~/.tmux-scout/status.json` 是否存在且有内容
+
+3. 确认当前有 Claude Code 会话在运行
+
+### Hooks 未生效
+
+1. 检查 `~/.claude/settings.json` 中的 hooks 配置
+2. 确认 `hook.sh` 有执行权限
+3. 重启 Claude Code 会话
 
 ## 许可证
 
