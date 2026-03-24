@@ -72,33 +72,42 @@ detect_pane_state() {
 status=$(cat "$STATUS_FILE")
 changed=false
 
-# Process each session
-for session_file in "$SESSIONS_DIR"/*.json 2>/dev/null; do
+# Process each session (only active ones)
+shopt -s nullglob
+for session_file in "$SESSIONS_DIR"/*.json; do
     [ -f "$session_file" ] || continue
 
-    session=$(cat "$session_file")
-    session_id=$(echo "$session" | jq -r '.sessionId')
-    tmux_pane=$(echo "$session" | jq -r '.tmuxPane // empty')
-    pid=$(echo "$session" | jq -r '.pid // empty')
-    current_status=$(echo "$session" | jq -r '.status')
-    ended_at=$(echo "$session" | jq -r '.endedAt // empty')
+    # Quick check: skip if already ended (grep is faster than jq)
+    if grep -q '"endedAt":[0-9]' "$session_file" 2>/dev/null; then
+        continue
+    fi
 
-    # Skip ended sessions
-    [ -n "$ended_at" ] && [ "$ended_at" != "null" ] && continue
+    # Parse all needed fields in one jq call
+    read -r tmux_pane pid current_status <<< "$(jq -r '[.tmuxPane // "", .pid // "", .status // "idle"] | @tsv' "$session_file")"
 
-    # Skip sessions without pane
-    [ -z "$tmux_pane" ] && continue
+    # Skip sessions without pane (but still check if PID is alive)
+    if [ -z "$tmux_pane" ]; then
+        # For sessions without tmux pane, check if process is still alive
+        if [ -n "$pid" ] && [ "$pid" != "null" ] && ! is_pid_alive "$pid"; then
+            jq --argjson now "$now" '
+                .status = "crashed"
+                | .endedAt = ($now | tonumber)
+                | .crashReason = "process exited (no tmux pane)"
+            ' "$session_file" > "${session_file}.tmp.$$" && mv "${session_file}.tmp.$$" "$session_file"
+            changed=true
+        fi
+        continue
+    fi
 
     # Check if pane still exists
     pane_info="${panes[$tmux_pane]:-}"
     if [ -z "$pane_info" ]; then
         # Pane doesn't exist, mark as ended
-        session=$(echo "$session" | jq --argjson now "$now" '
+        jq --argjson now "$now" '
             .status = "crashed"
             | .endedAt = ($now | tonumber)
             | .crashReason = "pane no longer exists"
-        ')
-        echo "$session" > "$session_file"
+        ' "$session_file" > "${session_file}.tmp.$$" && mv "${session_file}.tmp.$$" "$session_file"
         changed=true
         continue
     fi
@@ -108,30 +117,25 @@ for session_file in "$SESSIONS_DIR"/*.json 2>/dev/null; do
 
     # Check for dead pane
     if [ "$pane_dead" = "1" ]; then
-        session=$(echo "$session" | jq --argjson now "$now" '
+        jq --argjson now "$now" '
             .status = "crashed"
             | .endedAt = ($now | tonumber)
             | .crashReason = "pane is dead"
-        ')
-        echo "$session" > "$session_file"
+        ' "$session_file" > "${session_file}.tmp.$$" && mv "${session_file}.tmp.$$" "$session_file"
         changed=true
         continue
     fi
 
     # Check for crashed process
     if [ -n "$pid" ] && [ "$pid" != "null" ] && ! is_pid_alive "$pid"; then
-        # PID is dead but pane still exists
-        if is_shell "$pane_cmd"; then
-            # Pane returned to shell, process crashed
-            session=$(echo "$session" | jq --arg cmd "$pane_cmd" --argjson now "$now" '
-                .status = "crashed"
-                | .endedAt = ($now | tonumber)
-                | .crashReason = ("process exited, pane returned to " + $cmd)
-            ')
-            echo "$session" > "$session_file"
-            changed=true
-            continue
-        fi
+        # PID is dead, mark session as ended
+        jq --arg cmd "$pane_cmd" --argjson now "$now" '
+            .status = "crashed"
+            | .endedAt = ($now | tonumber)
+            | .crashReason = ("process exited" + (if $cmd != "" then ", pane now: " + $cmd else "" end))
+        ' "$session_file" > "${session_file}.tmp.$$" && mv "${session_file}.tmp.$$" "$session_file"
+        changed=true
+        continue
     fi
 
     # Detect state from pane content
@@ -140,36 +144,36 @@ for session_file in "$SESSIONS_DIR"/*.json 2>/dev/null; do
     if [ -n "$detected_state" ]; then
         case "$detected_state" in
             needsAttention)
-                if [ "$(echo "$session" | jq -r '.needsAttention')" = "null" ]; then
-                    session=$(echo "$session" | jq --argjson now "$now" '
+                needs_attention=$(jq -r '.needsAttention // empty' "$session_file")
+                if [ -z "$needs_attention" ]; then
+                    jq --argjson now "$now" '
                         .needsAttention = "waiting for approval"
                         | .lastUpdated = ($now | tonumber)
-                    ')
-                    echo "$session" > "$session_file"
+                    ' "$session_file" > "${session_file}.tmp.$$" && mv "${session_file}.tmp.$$" "$session_file"
                     changed=true
                 fi
                 ;;
             working)
-                if [ "$current_status" != "working" ] || [ "$(echo "$session" | jq -r '.needsAttention')" != "null" ]; then
-                    session=$(echo "$session" | jq --argjson now "$now" '
+                needs_attention=$(jq -r '.needsAttention // empty' "$session_file")
+                if [ "$current_status" != "working" ] || [ -n "$needs_attention" ]; then
+                    jq --argjson now "$now" '
                         .status = "working"
                         | .needsAttention = null
                         | .pendingToolUse = null
                         | .lastUpdated = ($now | tonumber)
-                    ')
-                    echo "$session" > "$session_file"
+                    ' "$session_file" > "${session_file}.tmp.$$" && mv "${session_file}.tmp.$$" "$session_file"
                     changed=true
                 fi
                 ;;
             completed)
-                if [ "$current_status" != "completed" ] || [ "$(echo "$session" | jq -r '.needsAttention')" != "null" ]; then
-                    session=$(echo "$session" | jq --argjson now "$now" '
+                needs_attention=$(jq -r '.needsAttention // empty' "$session_file")
+                if [ "$current_status" != "completed" ] || [ -n "$needs_attention" ]; then
+                    jq --argjson now "$now" '
                         .status = "completed"
                         | .needsAttention = null
                         | .pendingToolUse = null
                         | .lastUpdated = ($now | tonumber)
-                    ')
-                    echo "$session" > "$session_file"
+                    ' "$session_file" > "${session_file}.tmp.$$" && mv "${session_file}.tmp.$$" "$session_file"
                     changed=true
                 fi
                 ;;
@@ -181,7 +185,7 @@ done
 if [ "$changed" = true ]; then
     # Rebuild status from session files
     status='{"version": 1, "lastUpdated": '"$now"', "sessions": {}}'
-    for session_file in "$SESSIONS_DIR"/*.json 2>/dev/null; do
+    for session_file in "$SESSIONS_DIR"/*.json; do
         [ -f "$session_file" ] || continue
         session=$(cat "$session_file")
         session_id=$(echo "$session" | jq -r '.sessionId')
