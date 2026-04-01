@@ -41,14 +41,20 @@ detect_pane_state() {
     content=$(tmux capture-pane -t "$pane_id" -p -S -8 2>/dev/null || true)
     local tail="${content//$'\n'/ }"
 
-    # Check for busy state (thinking/generating)
-    if echo "$tail" | grep -qE '✻ Thinking|∴ Thinking|[↓↑] [0-9.,]+[kKmM]? tokens\)'; then
+    # Check for busy state (token count with arrow — most reliable indicator)
+    if echo "$tail" | grep -qE '[↓↑] [0-9.,]+[kKmM]? tokens'; then
         echo "working"
         return
     fi
 
-    # Check for done state
-    if echo "$tail" | grep -qE '✻ (Baked|Brewed|Churned|Cogitated|Cooked|Crunched|Sautéed|Worked) for'; then
+    # Check for busy state (spinner + verb + ellipsis — early working phase)
+    if echo "$tail" | grep -qE '(✻|∴|✽|\*) [A-Z][a-z]+(…|\.\.\.)'; then
+        echo "working"
+        return
+    fi
+
+    # Check for done state (any "<verb> for <duration>" pattern)
+    if echo "$tail" | grep -qE 'for [0-9]+[mhs]'; then
         echo "completed"
         return
     fi
@@ -60,7 +66,7 @@ detect_pane_state() {
     fi
 
     # Check for idle
-    if echo "$tail" | grep -q '✻ Idle'; then
+    if echo "$tail" | grep -q 'Idle'; then
         echo "completed"
         return
     fi
