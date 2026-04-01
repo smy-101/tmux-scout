@@ -38,8 +38,8 @@ is_shell() {
 detect_pane_state() {
     local pane_id=$1
     local content
-    content=$(tmux capture-pane -t "$pane_id" -p -S -15 2>/dev/null || echo "")
-    local tail=$(echo "$content" | tail -8 | tr '\n' ' ')
+    content=$(tmux capture-pane -t "$pane_id" -p -S -8 2>/dev/null || true)
+    local tail="${content//$'\n'/ }"
 
     # Check for busy state (thinking/generating)
     if echo "$tail" | grep -qE '✻ Thinking|∴ Thinking|[↓↑] [0-9.,]+[kKmM]? tokens\)'; then

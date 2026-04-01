@@ -8,6 +8,9 @@ STATUS_DIR="$HOME/.tmux-scout"
 STATUS_FILE="$STATUS_DIR/status.json"
 SESSIONS_DIR="$STATUS_DIR/sessions"
 
+# --reload: called by fzf reload (run sync, output lines to stdout)
+MODE="${1:-interactive}"
+
 # Restore PATH
 if scout_path=$(tmux show-environment -g SCOUT_PATH 2>/dev/null); then
     export PATH="${scout_path#SCOUT_PATH=}"
@@ -19,65 +22,45 @@ if [ ! -f "$STATUS_FILE" ]; then
     echo '{"version": 1, "sessions": {}}' > "$STATUS_FILE"
 fi
 
-# Run sync first
-bash "$SCRIPT_DIR/sync.sh" 2>/dev/null || true
+# Run sync only on reload — initial load uses cached data for instant display
+if [ "$MODE" = "--reload" ]; then
+    bash "$SCRIPT_DIR/sync.sh" 2>/dev/null || true
+fi
 
 CURRENT_PANE=$(tmux display-message -p '#{pane_id}' 2>/dev/null || true)
-RELOAD_CMD="bash $(printf '%q' "$SCRIPT_DIR/picker.sh")"
-AUTO_FLAG="/tmp/tmux-scout-auto-$$"
-LISTEN_PORT=$((10000 + RANDOM % 50000))
 
-# Auto-refresh on by default
-touch "$AUTO_FLAG"
-
-# Generate fzf lines
+# Generate fzf lines — single jq call extracts all fields at once
 generate_lines() {
     local current_pane="${1:-}"
 
-    # Print header (align with data columns)
-    # Data: cur(1) sp(1) tag(8) sp(2) agent(6) sp(2) project(25) sp(2) title
-    # Agent at pos 12, project at pos 20, title at pos 47
+    # Print header
     printf "_\t  STATUS    AGENT   PROJECT                    TITLE\n"
 
-    # Get tmux panes snapshot
+    # Get tmux panes snapshot (single call)
     declare -A pane_commands
-    while IFS='|' read -r pane_id pane_cmd pane_dead; do
-        pane_commands["$pane_id"]="$pane_cmd:$pane_dead"
+    while IFS='|' read -r p_id p_cmd p_dead; do
+        pane_commands["$p_id"]="$p_cmd:$p_dead"
     done < <(tmux list-panes -a -F "#{pane_id}|#{pane_current_command}|#{pane_dead}" 2>/dev/null || true)
 
-    # Process each session JSON line by line
+    # Use \x1f (Unit Separator) as delimiter — tab is whitespace, bash merges consecutive whitespace
+    local SEP=$'\x1f'
     local found_any=0
-    while IFS= read -r line; do
-        [ -z "$line" ] && continue
-
-        # Extract fields using jq
-        local tmux_pane sess_status needs_attention pending_tool session_title working_directory agent_type
-        tmux_pane=$(echo "$line" | jq -r '.tmuxPane // empty')
+    while IFS="$SEP" read -r tmux_pane sess_status needs_attention pending_tool session_title working_directory agent_type; do
         [ -z "$tmux_pane" ] && continue
 
         # Check pane exists and is alive
         local pane_info="${pane_commands[$tmux_pane]:-}"
         [ -z "$pane_info" ] && continue
 
-        local pane_cmd pane_dead
-        pane_cmd=$(echo "$pane_info" | cut -d: -f1)
-        pane_dead=$(echo "$pane_info" | cut -d: -f2)
+        local pane_dead="${pane_info##*:}"
         [ "$pane_dead" = "1" ] && continue
-
-        # Extract other fields
-        sess_status=$(echo "$line" | jq -r '.status // "idle"')
-        needs_attention=$(echo "$line" | jq -r '.needsAttention // empty')
-        pending_tool=$(echo "$line" | jq -r '.pendingToolUse.details // empty')
-        session_title=$(echo "$line" | jq -r '.sessionTitle // empty')
-        working_directory=$(echo "$line" | jq -r '.workingDirectory // "?"')
-        agent_type=$(echo "$line" | jq -r '.agentType // "unknown"')
 
         found_any=1
 
         # Build output parts
         local left_part="" agent_part="" project_part="" title_part=""
 
-        # Current pane indicator + status (total 11 visible chars: "  [STATUS]")
+        # Current pane indicator + status
         if [ "$tmux_pane" = "$current_pane" ]; then
             left_part=$(printf '\033[33m*\033[0m')
         else
@@ -94,7 +77,7 @@ generate_lines() {
             left_part="${left_part}$(printf ' \033[34m[ IDLE ]\033[0m')"
         fi
 
-        # Agent (6 visible chars) - pad first, then add ANSI codes
+        # Agent (6 visible chars)
         local agent_plain
         agent_plain=$(printf "%-6s" "${agent_type:0:6}")
         case "$agent_type" in
@@ -112,9 +95,8 @@ generate_lines() {
                 ;;
         esac
 
-        # Project (25 visible chars)
-        local project
-        project=$(basename "$working_directory")
+        # Project (25 visible chars) — bash string ops instead of basename command
+        local project="${working_directory##*/}"
         [ ${#project} -gt 25 ] && project="${project:0:24}~"
         project_part=$(printf '%-25s' "$project")
 
@@ -130,12 +112,31 @@ generate_lines() {
         fi
 
         printf "%s\t%s  %s  %s  %s %s\n" "$tmux_pane" "$left_part" "$agent_part" "$project_part" "$title_part" "$detail"
-    done < <(jq -c '.sessions[] | select(.endedAt == null)' "$STATUS_FILE" 2>/dev/null)
+    done < <(jq -r '
+        .sessions[] | select(.endedAt == null)
+        | [.tmuxPane // "", .status // "idle", .needsAttention // "",
+           (.pendingToolUse.details // ""), (.sessionTitle // ""),
+           (.workingDirectory // "?"), (.agentType // "unknown")]
+        | @tsv | gsub("\t"; "\u001f")
+    ' "$STATUS_FILE" 2>/dev/null)
 
     if [ "$found_any" = "0" ]; then
         printf "NONE\t$(printf '\033[2mNo active sessions found.\033[0m')\n"
     fi
 }
+
+# On reload: just output lines to stdout and exit (no fzf launch)
+if [ "$MODE" = "--reload" ]; then
+    generate_lines "$CURRENT_PANE"
+    exit 0
+fi
+
+RELOAD_CMD="bash $(printf '%q' "$SCRIPT_DIR/picker.sh") --reload"
+AUTO_FLAG="/tmp/tmux-scout-auto-$$"
+LISTEN_PORT=$((10000 + RANDOM % 50000))
+
+# Auto-refresh on by default
+touch "$AUTO_FLAG"
 
 # Cache lines and compute popup height
 LINES_FILE=$(mktemp /tmp/tmux-scout-lines.XXXXXX)
