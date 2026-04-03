@@ -18,6 +18,17 @@ while IFS='|' read -r pane_id pane_pid pane_cmd pane_dead; do
     panes["$pane_id"]="$pane_pid:$pane_cmd:$pane_dead"
 done < <(tmux list-panes -a -F "#{pane_id}|#{pane_pid}|#{pane_current_command}|#{pane_dead}" 2>/dev/null || true)
 
+# Skip session termination when picker is active (avoid disappearing sessions in fzf)
+picker_active=false
+if [ -f "/tmp/tmux-scout-picker-active" ]; then
+    picker_pid=$(cat /tmp/tmux-scout-picker-active 2>/dev/null)
+    if [ -n "$picker_pid" ] && kill -0 "$picker_pid" 2>/dev/null; then
+        picker_active=true
+    else
+        rm -f /tmp/tmux-scout-picker-active
+    fi
+fi
+
 # Check if a PID is alive
 is_pid_alive() {
     local pid=$1
@@ -93,6 +104,8 @@ for session_file in "$SESSIONS_DIR"/*.json; do
 
     # Skip sessions without pane (but still check if PID is alive)
     if [ -z "$tmux_pane" ]; then
+        # Skip termination while picker is open
+        [ "$picker_active" = true ] && continue
         # For sessions without tmux pane, check if process is still alive
         if [ -n "$pid" ] && [ "$pid" != "null" ] && ! is_pid_alive "$pid"; then
             jq --argjson now "$now" '
@@ -108,6 +121,8 @@ for session_file in "$SESSIONS_DIR"/*.json; do
     # Check if pane still exists
     pane_info="${panes[$tmux_pane]:-}"
     if [ -z "$pane_info" ]; then
+        # Skip termination while picker is open
+        [ "$picker_active" = true ] && continue
         # Pane doesn't exist, mark as ended
         jq --argjson now "$now" '
             .status = "crashed"
@@ -123,6 +138,8 @@ for session_file in "$SESSIONS_DIR"/*.json; do
 
     # Check for dead pane
     if [ "$pane_dead" = "1" ]; then
+        # Skip termination while picker is open
+        [ "$picker_active" = true ] && continue
         jq --argjson now "$now" '
             .status = "crashed"
             | .endedAt = ($now | tonumber)
@@ -134,6 +151,8 @@ for session_file in "$SESSIONS_DIR"/*.json; do
 
     # Check for crashed process
     if [ -n "$pid" ] && [ "$pid" != "null" ] && ! is_pid_alive "$pid"; then
+        # Skip termination while picker is open
+        [ "$picker_active" = true ] && continue
         # PID is dead, mark session as ended
         jq --arg cmd "$pane_cmd" --argjson now "$now" '
             .status = "crashed"

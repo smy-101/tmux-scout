@@ -133,6 +133,7 @@ fi
 
 RELOAD_CMD="bash $(printf '%q' "$SCRIPT_DIR/picker.sh") --reload"
 AUTO_FLAG="/tmp/tmux-scout-auto-$$"
+PICKER_FLAG="/tmp/tmux-scout-picker-active"
 LISTEN_PORT=$((10000 + RANDOM % 50000))
 
 # Auto-refresh on by default
@@ -145,6 +146,7 @@ lines=$(wc -l < "$LINES_FILE" | tr -d ' ')
 height=$((lines + 8))
 [ "$height" -lt 12 ] && height=12
 [ "$height" -gt 30 ] && height=30
+echo $$ > "$PICKER_FLAG"
 
 # Background auto-refresh daemon
 (
@@ -185,7 +187,7 @@ selected=$(cat "$LINES_FILE" | fzf \
     || true)
 
 kill $AUTO_PID 2>/dev/null; wait $AUTO_PID 2>/dev/null
-rm -f "$LINES_FILE" "$AUTO_FLAG"
+rm -f "$LINES_FILE" "$AUTO_FLAG" "$PICKER_FLAG"
 [ -z "$selected" ] && exit 0
 
 pane_id=$(echo "$selected" | cut -f1)
