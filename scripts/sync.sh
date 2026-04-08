@@ -45,44 +45,58 @@ is_shell() {
     esac
 }
 
-# Detect pane state from content
+# Detect pane state from content (phased detection to avoid false positives)
+# Order matters: BUSY → DONE → WAIT → IDLE → INTERRUPTED
 detect_pane_state() {
     local pane_id=$1
     local content
-    content=$(tmux capture-pane -t "$pane_id" -p -S -8 2>/dev/null || true)
-    local tail="${content//$'\n'/ }"
+    content=$(tmux capture-pane -t "$pane_id" -p -S -15 2>/dev/null || true)
+    [ -z "$content" ] && return
 
-    # Check for busy state (token count with arrow — most reliable indicator)
+    # Join last 8 lines for pattern matching
+    local tail
+    tail=$(echo "$content" | tail -8 | tr '\n' ' ')
+
+    # Phase 1: BUSY — model is actively generating
+    # Token count with arrow (e.g. "↓ 12.3k tokens")
     if echo "$tail" | grep -qE '[↓↑] [0-9.,]+[kKmM]? tokens'; then
         echo "working"
         return
     fi
-
-    # Check for busy state (spinner + verb + ellipsis — early working phase)
-    if echo "$tail" | grep -qE '(✻|∴|✽|\*) [A-Z][a-z]+(…|\.\.\.)'; then
+    # Thinking indicators
+    if echo "$tail" | grep -qE '(✻|∴) Thinking'; then
+        echo "working"
+        return
+    fi
+    # Spinner + verb (e.g. "✻ Baking…")
+    if echo "$tail" | grep -qE '(✻|∴|✽) [A-Z][a-z]+(…|\.\.\.)'; then
         echo "working"
         return
     fi
 
-    # Check for done state (any "<verb> for <duration>" pattern)
-    if echo "$tail" | grep -qE 'for [0-9]+[mhs]'; then
+    # Phase 2: DONE — model just finished (specific verb pattern, gates false positives)
+    if echo "$tail" | grep -qE '✻ (Baked|Brewed|Churned|Cogitated|Cooked|Crunched|Sautéed|Worked) for '; then
         echo "completed"
         return
     fi
 
-    # Check for needs attention
+    # Phase 3: WAIT — permission/approval prompts (only after BUSY/DONE ruled out)
     if echo "$tail" | grep -qE 'Do you want to proceed|Would you like to proceed|Enter plan mode|Exit plan mode|Do you want to allow'; then
         echo "needsAttention"
         return
     fi
 
-    # Check for idle
-    if echo "$tail" | grep -q 'Idle'; then
+    # Phase 4: IDLE
+    if echo "$tail" | grep -qE '✻ Idle'; then
         echo "completed"
         return
     fi
 
-    echo ""
+    # Phase 5: INTERRUPTED
+    if echo "$tail" | grep -qE 'Interrupted \. What should Claude do instead'; then
+        echo "completed"
+        return
+    fi
 }
 
 # Read status file

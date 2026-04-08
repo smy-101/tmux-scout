@@ -22,12 +22,13 @@ if [ ! -f "$STATUS_FILE" ]; then
     echo '{"version": 1, "sessions": {}}' > "$STATUS_FILE"
 fi
 
+CURRENT_PANE=$(tmux display-message -p '#{pane_id}' 2>/dev/null || true)
+
 # Run sync only on reload — initial load uses cached data for instant display
 if [ "$MODE" = "--reload" ]; then
+    CURRENT_PANE="${2:-$CURRENT_PANE}"
     bash "$SCRIPT_DIR/sync.sh" 2>/dev/null || true
 fi
-
-CURRENT_PANE=$(tmux display-message -p '#{pane_id}' 2>/dev/null || true)
 
 # Generate fzf lines — single jq call extracts all fields at once
 generate_lines() {
@@ -131,7 +132,7 @@ if [ "$MODE" = "--reload" ]; then
     exit 0
 fi
 
-RELOAD_CMD="bash $(printf '%q' "$SCRIPT_DIR/picker.sh") --reload"
+RELOAD_CMD="bash $(printf '%q' "$SCRIPT_DIR/picker.sh") --reload $(printf '%q' "$CURRENT_PANE")"
 AUTO_FLAG="/tmp/tmux-scout-auto-$$"
 PICKER_FLAG="/tmp/tmux-scout-picker-active"
 LISTEN_PORT=$((10000 + RANDOM % 50000))
